@@ -4,9 +4,6 @@ from pathlib import Path
 
 from jina import Flow
 from jina.parsers.helloworld import set_hw_parser
-# do `pip install git+https://github.com/jina-ai/executors.git@fix-pea-id-runtime`
-from jinahub.indexers.storage.PostgreSQLStorage import PostgreSQLStorage
-from jinahub.indexers.searcher.AnnoySearcher import AnnoySearcher
 
 if __name__ == '__main__':
     from helper import (
@@ -79,7 +76,7 @@ def hello_world(args):
         Flow()
         .add(uses=MyEncoder, parallel=2)
         # requires PSQL running. do `docker run -e POSTGRES_PASSWORD=123456  -p 127.0.0.1:5432:5432/tcp postgres:13.2`
-        .add(uses=PostgreSQLStorage, name='psql')
+        .add(uses='jinahub://PostgreSQLStorage', name='psql')
     )
 
     # store the data
@@ -105,9 +102,9 @@ def hello_world(args):
         .add(uses=MyEncoder, parallel=2)
         # to perform vector similarity
         # replicas >= 2 required for rolling update
-        .add(uses=AnnoySearcher, name='searcher', parallel=2, replicas=2, uses_after=MatchMerger)
+        .add(uses='jinahub://AnnoySearcher', name='searcher', parallel=2, replicas=2, uses_after=MatchMerger)
         # to retrieve full Document metadata
-        .add(uses=PostgreSQLStorage, uses_with={'default_traversal_paths': ['m']})
+        .add(uses='jinahub://PostgreSQLStorage', override_with={'default_traversal_paths': ['m']})
         .add(uses=MyEvaluator)
     )
 
