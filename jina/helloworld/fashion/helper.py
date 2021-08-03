@@ -51,6 +51,7 @@ def index_generator(num_docs: int, target: dict):
     :param target: Dictionary which stores the data paths
     :yields: index data
     """
+    total = 0
     for internal_doc_id in range(num_docs):
         # x_blackwhite.shape is (28,28)
         x_blackwhite = 255 - target['index']['data'][internal_doc_id]
@@ -59,6 +60,9 @@ def index_generator(num_docs: int, target: dict):
         d = Document(content=x_color)
         d.tags['id'] = internal_doc_id
         yield d
+        total += 1
+        if total == 30:
+            return
 
 
 def query_generator(num_docs: int, target: dict, with_groundtruth: bool = True):
@@ -102,7 +106,7 @@ def print_result(resp):
         for kk in d.matches:
             kmi = kk.uri
             result_html.append(
-                f'<img src="{kmi}" style="opacity:{kk.scores["cosine"].value}"/>'
+                f'<img src="{kmi}" style="opacity:{kk.scores["euclidean"].value}"/>'
             )
         result_html.append('</td></tr>\n')
 

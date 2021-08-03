@@ -1,8 +1,12 @@
 import os
+import shutil
 from pathlib import Path
 
 from jina import Flow
 from jina.parsers.helloworld import set_hw_parser
+# do `pip install git+https://github.com/jina-ai/executors.git@fix-pea-id-runtime`
+from jinahub.indexers.storage.PostgreSQLStorage import PostgreSQLStorage
+from jinahub.indexers.searcher.AnnoySearcher import AnnoySearcher
 
 if __name__ == '__main__':
     from helper import (
@@ -12,7 +16,7 @@ if __name__ == '__main__':
         index_generator,
         query_generator,
     )
-    from my_executors import MyEncoder, MyIndexer, MyEvaluator, MyConverter
+    from my_executors import MyEncoder, MyIndexer, MyEvaluator, MyConverter, MatchMerger
 else:
     from .helper import (
         print_result,
@@ -71,25 +75,53 @@ def hello_world(args):
     os.environ['JINA_ARRAY_QUANT'] = 'fp16'
     # now comes the real work
     # load index flow from a YAML file
-    f = (
+    storage_flow = (
         Flow()
         .add(uses=MyEncoder, parallel=2)
-        .add(uses=MyIndexer, workspace=args.workdir)
-        .add(uses=MyEvaluator)
+        # requires PSQL running. do `docker run -e POSTGRES_PASSWORD=123456  -p 127.0.0.1:5432:5432/tcp postgres:13.2`
+        .add(uses=PostgreSQLStorage, name='psql')
     )
 
-    # run it!
-    with f:
-        f.index(
+    # store the data
+    with storage_flow:
+        storage_flow.index(
             index_generator(num_docs=targets['index']['data'].shape[0], target=targets),
             request_size=args.request_size,
             show_progress=True,
         )
+        dump_path = os.path.join(os.path.curdir, 'dump')
+        # if exists from previous run
+        shutil.rmtree(dump_path, ignore_errors=True)
+        # dump to intermediary location
+        storage_flow.post(
+            target_peapod='psql', # optional. just to avoid errors in the Encoder
+            on='/dump',
+            parameters={'dump_path': dump_path, 'shards': 2}
+        )
 
-        f.post(
-            '/eval',
+    # define query flow
+    query_flow = (
+        Flow()
+        .add(uses=MyEncoder, parallel=2)
+        # to perform vector similarity
+        # replicas >= 2 required for rolling update
+        .add(uses=AnnoySearcher, name='searcher', parallel=2, replicas=2, uses_after=MatchMerger)
+        # to retrieve full Document metadata
+        .add(uses=PostgreSQLStorage, uses_with={'default_traversal_paths': ['m']})
+        .add(uses=MyEvaluator)
+    )
+
+    # start query flow
+    with query_flow:
+        # perform rolling update
+        query_flow.rolling_update(pod_name='searcher', dump_path=dump_path)
+
+        # do a search
+        query_flow.post(
+            # can be `/eval`, but requires re-mapping requests. this is an MVP
+            '/search',
             query_generator(
-                num_docs=args.num_query, target=targets, with_groundtruth=True
+                num_docs=10, target=targets, with_groundtruth=True
             ),
             shuffle=True,
             on_done=print_result,
